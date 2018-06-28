@@ -1,0 +1,356 @@
+---
+title: "Guardian_Text_Mining"
+author: "Swagata Chakraborty"
+date: "6/21/2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+#install.packages("jsonlite")
+library(jsonlite)
+library(purrr)
+library(tidyverse)
+library(ggmap)
+library(ggplot2)
+library(dplyr)
+library(tidyverse)
+library(scales)
+library(lubridate)
+library(forcats)
+library(tm)
+library(tidytext)
+library(wordcloud)
+library(ggplot2)
+library(scales)
+```
+
+Load File:
+```{r}
+path <-  "/Users/swagatachakraborty/Documents/sc53711/Applications/Universities/UCSD/Assignments/Hansen_Project/articles"
+files <- dir(path, pattern = "*.json")
+data <- files %>%
+       map_df(~fromJSON(file.path(path, .), flatten = TRUE))
+```
+
+# Document Term Matrix (DTM): 
+
+Document Term Matrix: This is an array where each row corresponds to a document and each column corresponds to a word. The entries of the array are simply counts of how many times a certain word occurs in a certain document. 
+
+Topic wise word clouds:
+```{r}
+## we have 86 granular categories
+#table(my_data$sectionId) %>% as.data.frame() %>% arrange(desc(Freq))
+
+## narrowed categories:
+# world+global
+# commentfree
+# sport+ football
+# country_news: uk_news + australia_news+ us_news +news
+# tv_radio & films & music & fashion & artanddesign
+# society & lifestyle & culture
+# business + business-to-business
+# politics + law
+# books 
+# education + higher-education-network + teacher-network
+# technology & science
+# environment
+# travel
+# healthcare-network
+
+my_data <-  data %>% 
+            filter(sectionId %in% c("world",
+                                    "global",
+                                    "sport",
+                                    "football",
+                                    "uk-news","australia-news","us-news","news",
+                                    "tv-and-radio","film","music","fashion","artanddesign",
+                                    "society" , "lifeandstyle" , "culture",
+                                    "business","business-to-business",
+                                    "politics" , "law",
+                                    "books", "education","higher-education-network" , "teacher-network",
+                                    "technology" , "science",
+                                    "environment",
+                                    "travel",
+                                    "healthcare-network")
+                   )
+
+my_data$group <- my_data$sectionId
+
+
+my_data[(my_data$sectionId %in% c("world", "global")),"group"] <- "world"
+my_data[(my_data$sectionId %in% c("sport", "football")),"group"] <- "sports"
+my_data[(my_data$sectionId %in% c("uk-news","australia-news","us-news","news")),"group"] <- "general_news"
+my_data[(my_data$sectionId %in% c("tv-and-radio","film","music","fashion","artanddesign")),"group"] <- "entertainment_art"
+my_data[(my_data$sectionId %in% c("society" , "lifeandstyle" , "culture")),"group"] <- "lifestyle_cult"
+my_data[(my_data$sectionId %in% c("business","business-to-business")),"group"] <- "business"
+my_data[ (my_data$sectionId %in% c("politics" , "law")),"group"] <- "politics_law"
+my_data[(my_data$sectionId %in% c("books", "education","higher-education-network" , "teacher-network")),"group"] <- "education"
+my_data[(my_data$sectionId %in% c("technology" , "science")),"group"] <- "tech_science"
+
+table(my_data$group) %>% as.data.frame() %>% arrange(desc(Freq))
+#my_data <- my_data %>% rename(id=doc_id,fields.bodyText=text )
+
+
+my_data_new <-my_data %>% group_by(group) %>% sample_frac(.3)
+
+colnames(my_data_new)[1] <- "doc_id"
+colnames(my_data_new)[31] <- "text"
+
+
+## shorten analysis: sample 10% rows from each category:
+
+
+## text part of each doc
+#text.c <- VCorpus(DataframeSource(select(my_data,doc_id,text)))
+
+
+docs <- data.frame(doc_id = my_data_new$doc_id,
+                   text = my_data_new$text,
+                   stringsAsFactors = FALSE)
+#(ds <- DataframeSource(docs))
+x <- VCorpus(DataframeSource(docs))
+# inspect(x)
+# meta(x)
+
+
+## DTM of the  text part of each Doc
+DTM <- DocumentTermMatrix(x,
+                          control=list(removePunctuation=TRUE,
+                                       wordLengths=c(3, Inf),
+                                       stopwords=TRUE,
+                                       stemming=TRUE,
+                                       removeNumbers=TRUE
+                                       ))
+
+DTM.sp <- removeSparseTerms(DTM,0.995)
+#inspect(DTM.sp)
+
+```
+
+
+
+## Visualization of common words
+
+1.) bar plot
+```{r}
+text.tidy <- tidy(DTM.sp)
+
+term.count <- text.tidy %>%
+              group_by(term) %>%
+              summarize(n.total=sum(count)) %>%
+              arrange(desc(n.total))
+
+## top 30 words
+term.count %>% 
+  slice(20:50) %>%
+  ggplot(aes(x=fct_reorder(term,n.total),y=n.total)) + geom_bar(stat='identity') + 
+  coord_flip() + xlab('Counts') + ylab('')+ggtitle('Most Frequent Terms')
+```
+
+\  
+\  
+
+2.) word cloud
+```{r}
+#top 95 words
+term.count.pop <- term.count %>% slice(20:100) 
+wordcloud(term.count.pop$term, term.count.pop$n.total, scale=c(5,.5))
+```
+
+\  
+\  
+\  
+
+## Visualization of sentiment analysis
+```{r}
+# text.tidy, creates table of doc*term frequency
+ap_sentiments <- text.tidy %>%
+  inner_join(get_sentiments("bing"), by = c(term = "word"))
+
+
+
+ap_sentiments %>%
+  count(sentiment, term, wt = count) %>%
+  ungroup() %>%
+  filter(n >= 20 & n <=25) %>%  # we'hv subset a very few words only because we wanted to visualize clearly and understand the code
+  mutate(n = ifelse(sentiment == "negative", -n, n)) %>%
+  mutate(term = reorder(term, n)) %>%
+  ggplot(aes(term, n, fill = sentiment)) +
+  geom_bar(stat = "identity") +
+  ylab("Contribution to sentiment") +
+  coord_flip()
+```
+\  
+\  
+
+## TF- IDF
+
+TF-IDF: We may be interested in finding the words most specific to each of the inaugural speeches. This could be quantified by calculating the tf-idf of each term-speech pair using the bind_tf_idf().
+
+The statistic tf-idf identifies words that are important to a document in a collection of documents; in this case, we’ll see which words are important in one of the documents compared to the others.
+```{r}
+text_tf_idf <- text.tidy %>%
+  count(document, term, sort = TRUE) %>%
+  bind_tf_idf(term, document, count) %>%
+  arrange(desc(tf_idf)) %>% 
+  group_by(document) %>%
+  top_n(10) %>%
+  ungroup
+
+## pick top documents
+doc_list <-text_tf_idf %>% group_by(document) %>% summarise(freq=n()) %>% arrange(-freq) %>% slice(1:6)
+
+##library(drlib) unable to install, using the functions desc itself below:
+reorder_within <- function(x, by, within, fun = mean, sep = "___", ...) {
+  new_x <- paste(x, within, sep = sep)
+  stats::reorder(new_x, by, FUN = fun)
+}
+
+scale_x_reordered <- function(..., sep = "___") {
+  reg <- paste0(sep, ".+$")
+  ggplot2::scale_x_discrete(labels = function(x) gsub(reg, "", x), ...)
+}
+
+## trial
+for (doc_temp in (doc_list$document)) {
+p <-text_tf_idf %>%
+    filter(document %in% doc_temp) %>% 
+    mutate(term = reorder_within(term, tf_idf, document)) %>%
+    slice(1:25) %>% 
+    ggplot(aes(term, tf_idf, fill = document)) +
+    geom_col(alpha = 0.8, show.legend = FALSE) +
+    #facet_wrap(~ document, scales = "free", ncol = 3) +
+    scale_x_reordered() +
+    coord_flip() +
+    theme(strip.text=element_text(size=11)) +
+    labs(x = NULL, y = "tf-idf",
+         title = "Highest tf-idf words in popular articles",
+         subtitle = paste("doc_type",doc_temp))
+
+print(p)
+}
+
+```
+
+
+
+```{r}
+# sort the data frame and convert word to a factor column
+plot_article <- text_tf_idf %>%
+  arrange(desc(tf_idf)) %>%
+  mutate(word = factor(term, levels = rev(unique(term))))
+  group_by(document) %>%
+  top_n(10) %>%
+  ungroup() %>% 
+
+head(plot_article)
+
+# graph the top 10 tokens for 4 categories
+
+for (group_temp in unique(my_data_new$group)) {
+  p <- plot_article %>%
+  left_join(my_data_new[,c("doc_id","group")], by = c("document" = "doc_id")) %>% 
+  filter(group %in% group_temp) %>% 
+  arrange(group,desc(tf_idf)) %>% 
+  #group_by(group) %>%
+  slice(1:10) %>%
+  #ungroup() %>%
+  ggplot(aes(word, tf_idf)) +
+  theme_classic()+
+  geom_col() +
+  labs(x = NULL, y = "tf-idf") +
+  facet_wrap(~group, scales = "free") +
+  coord_flip() +
+  labs(
+         title = "Highest tf-idf words in different category of articles",
+         subtitle = paste("acrticle category: ",group_temp))
+  
+  print(p)
+}
+
+  
+  
+  plot_article %>%
+  left_join(my_data_new[,c("doc_id","group")], by = c("document" = "doc_id")) %>% 
+  filter(group %in% c("entertainment_art")) %>% 
+  arrange(desc(tf_idf)) %>% 
+  #group_by(group) %>%
+  slice(1:25) %>%
+  #ungroup() %>%
+  ggplot(aes(word, tf_idf)) +
+  geom_col() +
+  labs(x = NULL, y = "tf-idf") +
+  facet_wrap(~group, scales = "free") +
+  coord_flip()
+  
+  
+
+```
+
+
+```{r}
+library(tidyr)
+
+year_term_counts <- text.tidy %>%
+  left_join(my_data[,c("doc_id","fields.lastModified")],by = c("document" = "doc_id")) %>% 
+  mutate(fields.lastModified=substr(fields.lastModified, 1, 10)) %>% 
+  complete(fields.lastModified, term, fill = list(count = 0)) %>%
+  group_by(fields.lastModified) %>%
+  mutate(year_total = sum(count))
+  
+year_term_counts %>%
+  filter(term %in% c("abort", "attack", "crime", "cancer", "work", "trump")) %>%
+  ggplot(aes(fields.lastModified, count / year_total)) +
+  geom_point() +
+  geom_smooth() +
+  facet_wrap(~ term, scales = "free_y") +
+  scale_y_continuous(labels = scales::percent_format()) +
+  ylab("% frequency of word in inaugural address")
+```
+
+ 
+## TOPIC MODELING:
+
+```{r}
+library(quanteda)
+library(stm)
+#install.packages("stm")
+
+article_dfm <- text.tidy %>%
+    count(document, term, sort = TRUE) %>%
+    cast_dfm(document, term, n)
+
+article_sparse <- text.tidy %>%
+    count(document, term, sort = TRUE) %>%
+    cast_sparse(document, term, n)
+
+
+topic_model <- stm(article_sparse, K = 8, 
+                   verbose = FALSE, init.type = "Spectral")
+```
+
+Plot Visualization:
+```{r}
+td_beta <- tidy(topic_model)
+
+td_beta %>%
+    group_by(topic) %>%
+    top_n(10, beta) %>%
+    ungroup() %>%
+    mutate(topic = paste0("Topic ", topic),
+           term = reorder_within(term, beta, topic)) %>%
+    ggplot(aes(term, beta, fill = as.factor(topic))) +
+    geom_col(alpha = 0.8, show.legend = FALSE) +
+    facet_wrap(~ topic, scales = "free_y") +
+    coord_flip() +
+    scale_x_reordered() +
+    labs(x = NULL, y = expression(beta),
+         title = "Highest word probabilities for each topic",
+         subtitle = "Different words are associated with different topics")
+```
+
